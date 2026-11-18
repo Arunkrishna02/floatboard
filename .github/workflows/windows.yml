@@ -1,0 +1,26 @@
+name: Windows build
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        arch: [x64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: Publish portable executable
+        run: dotnet publish Floatboard.csproj -c Release -r win-${{ matrix.arch }} --self-contained true -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o publish
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Floatboard-Windows-${{ matrix.arch }}
+          path: |
+            publish/Floatboard.exe
+            README.md
