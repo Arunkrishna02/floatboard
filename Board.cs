@@ -2,21 +2,22 @@ using System.Runtime.InteropServices;
 
 namespace Floatboard;
 
-sealed class Board : Form
+sealed partial class Board : Form
 {
     readonly History history = new();
     readonly Metrics metrics = new();
     readonly System.Windows.Forms.Timer pulse = new() { Interval = 1000 };
     readonly System.Windows.Forms.Timer capture = new() { Interval = 120 };
-    readonly ListView list = new() { View = View.Details, FullRowSelect = true, MultiSelect = false,
-        HideSelection = false, Dock = DockStyle.Fill, BorderStyle = BorderStyle.None };
-    readonly Label title = new() { Text = "Floatboard", AutoSize = true, Font = new Font("Segoe UI Semibold", 17) };
-    readonly Label clock = new() { Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft };
+    readonly ListBox list = new() { Dock = DockStyle.Fill, DrawMode = DrawMode.OwnerDrawFixed,
+        BorderStyle = BorderStyle.None, IntegralHeight = false, AccessibleName = "Clipboard history" };
+    readonly Label title = new() { Text = "Floatboard", AutoSize = true };
+    readonly Label clock = new() { AutoSize = true };
     readonly Label status = new() { Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, AutoEllipsis = true };
-    readonly TextBox preview = new() { Dock = DockStyle.Fill, Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical };
+    readonly TextBox preview = new() { Dock = DockStyle.Fill, Multiline = true, ReadOnly = true,
+        BorderStyle = BorderStyle.None, ScrollBars = ScrollBars.Vertical, AccessibleName = "Clipboard item preview" };
     readonly Button stats = new() { Text = "Usage & weather ▾", AutoSize = true };
     readonly Button options = new() { Text = "Settings ▾", AutoSize = true };
-    readonly Button copy = new() { Text = "Copy", AutoSize = true };
+    readonly Button copy = new() { Text = "Copy item", AutoSize = true };
     readonly Button pin = new() { Text = "Pin", AutoSize = true };
     readonly Button delete = new() { Text = "Delete", AutoSize = true };
     readonly ContextMenuStrip readings = new();
@@ -36,42 +37,19 @@ sealed class Board : Form
         Font = new Font("Segoe UI", 10);
         TopMost = true;
         FormBorderStyle = FormBorderStyle.SizableToolWindow;
-        MinimumSize = new Size(390, 390);
-        Size = new Size(500, 630);
+        MinimumSize = new Size(430, 460);
+        Size = new Size(500, 650);
         StartPosition = FormStartPosition.Manual;
         var work = Screen.PrimaryScreen!.WorkingArea;
         Location = new Point(Math.Max(work.Left, work.Right - Width - 20), work.Top + 24);
         Height = Math.Min(Height, Math.Max(MinimumSize.Height, work.Height - 48));
 
-        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 6,
-            Padding = new Padding(12) };
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        foreach (var size in new[] { 42, 30, 0, 92, 40, 26 })
-            layout.RowStyles.Add(size == 0 ? new RowStyle(SizeType.Percent, 100) : new RowStyle(SizeType.Absolute, size));
-        var header = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 1, Margin = Padding.Empty };
-        header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        title.Anchor = AnchorStyles.Left;
-        header.Controls.Add(title, 0, 0);
-        header.Controls.Add(stats, 1, 0);
-        header.Controls.Add(options, 2, 0);
-        var actions = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false, Margin = Padding.Empty };
-        actions.Controls.AddRange([copy, pin, delete]);
-        layout.Controls.Add(header, 0, 0);
-        layout.Controls.Add(clock, 0, 1);
-        layout.Controls.Add(list, 0, 2);
-        layout.Controls.Add(preview, 0, 3);
-        layout.Controls.Add(actions, 0, 4);
-        layout.Controls.Add(status, 0, 5);
-        Controls.Add(layout);
-
-        list.Columns.Add("Clipboard history", 240);
-        list.Columns.Add("Format", 77);
-        list.Columns.Add("Saved", 95);
-        list.ClientSizeChanged += (_, _) => list.Columns[0].Width = Math.Max(90, list.ClientSize.Width - 194);
+        BuildLayout();
         list.SelectedIndexChanged += (_, _) => SelectionChanged();
-        list.DoubleClick += (_, _) => CopySelected();
+        list.MouseDoubleClick += (_, e) =>
+        {
+            if (list.IndexFromPoint(e.Location) >= 0) CopySelected();
+        };
         list.KeyDown += (_, e) =>
         {
             if (e.KeyCode == Keys.Enter) { CopySelected(); e.SuppressKeyPress = true; }
@@ -157,6 +135,7 @@ sealed class Board : Form
     {
         base.OnHandleCreated(e);
         listening = AddClipboardFormatListener(Handle);
+        ApplyWindowTheme();
     }
 
     protected override void OnHandleDestroyed(EventArgs e)
@@ -215,23 +194,35 @@ sealed class Board : Form
         }
     }
 
-    Clip? Selected => list.SelectedItems.Count == 0 ? null : list.SelectedItems[0].Tag as Clip;
+    Clip? Selected => (list.SelectedItem as HistoryRow)?.Clip;
 
     void RenderHistory(Clip? selected = null)
     {
-        selected ??= Selected;
+        var previous = Selected;
+        selected ??= previous;
+        int oldIndex = list.SelectedIndex;
+        var top = list.Items.Count > 0 && list.TopIndex > 0
+            ? (list.Items[list.TopIndex] as HistoryRow)?.Clip : null;
+        var rows = history.Items.OrderByDescending(item => item.Pinned).Select(clip => new HistoryRow(clip)).ToArray();
         list.BeginUpdate();
-        list.Items.Clear();
-        foreach (var clip in history.Items.OrderByDescending(item => item.Pinned))
+        try
         {
-            string text = clip.Preview.ReplaceLineEndings(" ").Replace('\t', ' ');
-            if (text.Length > 180) text = text[..180] + "…";
-            var row = new ListViewItem([clip.Pinned ? "★  " + text : text, clip.Kind,
-                clip.Captured.LocalDateTime.ToString("g")]) { Tag = clip };
-            list.Items.Add(row);
-            if (ReferenceEquals(clip, selected)) row.Selected = true;
+            list.Items.Clear();
+            list.Items.AddRange(rows);
+            int index = Array.FindIndex(rows, row => ReferenceEquals(row.Clip, selected));
+            if (index < 0 && rows.Length > 0)
+                index = Math.Clamp(oldIndex, 0, rows.Length - 1);
+            list.SelectedIndex = index;
+            int topIndex = top == null ? -1 : Array.FindIndex(rows, row => ReferenceEquals(row.Clip, top));
+            if (topIndex >= 0 && selected == previous && index >= topIndex
+                && index < topIndex + Math.Max(1, list.ClientSize.Height / list.ItemHeight))
+                list.TopIndex = topIndex;
+            if (selected?.Pinned == true && index >= 0 && index < list.TopIndex)
+                list.TopIndex = index;
         }
-        list.EndUpdate();
+        finally { list.EndUpdate(); }
+        count.Text = history.Items.Count == 1 ? "1 item" : $"{history.Items.Count} items";
+        empty.Visible = rows.Length == 0;
         SelectionChanged();
     }
 
@@ -240,6 +231,7 @@ sealed class Board : Form
         var clip = Selected;
         copy.Enabled = pin.Enabled = delete.Enabled = clip != null;
         pin.Text = clip?.Pinned == true ? "Unpin" : "Pin";
+        previewHeading.Text = clip == null ? "Preview" : $"Preview  ·  {clip.Kind}";
         preview.Text = clip?.Files != null ? string.Join(Environment.NewLine, clip.Files)
             : clip?.Text ?? clip?.Preview ?? "";
     }
@@ -332,6 +324,9 @@ sealed class Board : Form
 
     void UpdateMenu()
     {
+        cpuTile.Update(metrics.Cpu);
+        memoryTile.Update(metrics.Ram);
+        gpuTile.Update(metrics.Gpu);
         readings.Items[0].Text = $"CPU   {Percent(metrics.Cpu)}";
         readings.Items[1].Text = $"Memory   {metrics.Memory} · {Percent(metrics.Ram)}";
         readings.Items[2].Text = $"GPU   {Percent(metrics.Gpu)}";
@@ -340,25 +335,6 @@ sealed class Board : Form
     }
 
     static string Percent(double? value) => value is double percent ? $"{percent:F0}%" : "Unavailable";
-
-    void ApplyTheme()
-    {
-        Opacity = history.Opacity / 100.0;
-        BackColor = history.Dark ? Color.FromArgb(18, 25, 39) : Color.FromArgb(238, 244, 249);
-        ForeColor = history.Dark ? Color.FromArgb(234, 241, 252) : Color.FromArgb(22, 39, 59);
-        var surface = history.Dark ? Color.FromArgb(29, 41, 59) : Color.White;
-        title.ForeColor = history.Dark ? Color.FromArgb(131, 227, 205) : Color.FromArgb(0, 99, 83);
-        foreach (Control control in new Control[] { list, preview, stats, options, copy, pin, delete })
-        {
-            control.BackColor = surface;
-            control.ForeColor = ForeColor;
-            if (control is Button button)
-            {
-                button.FlatStyle = FlatStyle.Flat;
-                button.FlatAppearance.BorderSize = 0;
-            }
-        }
-    }
 
     void ShowBoard()
     {
