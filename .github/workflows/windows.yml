@@ -1,6 +1,8 @@
 name: Windows build
 on:
   push:
+    branches: [main]
+    tags: [v*]
   pull_request:
   workflow_dispatch:
 permissions:
@@ -24,3 +26,25 @@ jobs:
           path: |
             publish/Floatboard.exe
             README.md
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: Floatboard-Windows-*
+          path: artifacts
+      - name: Package Windows downloads
+        run: |
+          for arch in x64 arm64; do
+            (cd "artifacts/Floatboard-Windows-$arch" && zip -j "../../Floatboard-Windows-$arch.zip" Floatboard.exe README.md)
+          done
+      - name: Publish preview
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" Floatboard-Windows-x64.zip Floatboard-Windows-arm64.zip             --repo "$GITHUB_REPOSITORY" --verify-tag --prerelease             --title "Floatboard $GITHUB_REF_NAME Preview"             --notes "Download the x64 ZIP for most Intel and AMD laptops or the ARM64 ZIP for Windows on Arm. Extract it and run Floatboard.exe. The runtime is included. This preview is unsigned."
