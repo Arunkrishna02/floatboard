@@ -41,10 +41,17 @@ jobs:
       - name: Package Windows downloads
         run: |
           for arch in x64 arm64; do
-            (cd "artifacts/Floatboard-Windows-$arch" && zip -j "../../Floatboard-Windows-$arch.zip" Floatboard.exe README.md)
+            artifact="artifacts/Floatboard-Windows-$arch"
+            test -s "$artifact/publish/Floatboard.exe"
+            test -s "$artifact/README.md"
+            zip -j "Floatboard-Windows-$arch.zip" "$artifact/publish/Floatboard.exe" "$artifact/README.md"
+            unzip -t "Floatboard-Windows-$arch.zip"
           done
       - name: Publish preview
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "$GITHUB_REF_NAME" Floatboard-Windows-x64.zip Floatboard-Windows-arm64.zip             --repo "$GITHUB_REPOSITORY" --verify-tag --prerelease             --title "Floatboard $GITHUB_REF_NAME Preview"             --notes "Download the x64 ZIP for most Intel and AMD laptops or the ARM64 ZIP for Windows on Arm. Extract it and run Floatboard.exe. The runtime is included. This preview is unsigned."
+          gh release create "$GITHUB_REF_NAME" Floatboard-Windows-x64.zip Floatboard-Windows-arm64.zip \
+            --repo "$GITHUB_REPOSITORY" --verify-tag --prerelease \
+            --title "Floatboard $GITHUB_REF_NAME Preview" \
+            --notes "Download the x64 ZIP for most Intel and AMD laptops or the ARM64 ZIP for Windows on Arm. Extract it and run Floatboard.exe. The runtime is included. This preview is unsigned."
